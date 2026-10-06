@@ -12,7 +12,7 @@ const db=createClient(supabaseUrl||'http://localhost',serviceKey||'missing',{aut
 
 const normalize=v=>String(v??'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim().replace(/\s+/g,' ');
 const editDistance=(a,b)=>{const prev=Array.from({length:b.length+1},(_,i)=>i);for(let i=1;i<=a.length;i++){const curr=[i];for(let j=1;j<=b.length;j++)curr[j]=Math.min(curr[j-1]+1,prev[j]+1,prev[j-1]+(a[i-1]===b[j-1]?0:1));for(let j=0;j<=b.length;j++)prev[j]=curr[j]}return prev[b.length]};
-const score=(input,p)=>{const n=normalize(input);const names=[p.name,p.catalogue_name,...(p.aliases||[])].filter(Boolean).map(normalize);return names.length?Math.max(...names.map(x=>n===x?1:1-editDistance(n,x)/Math.max(n.length,x.length))):0};
+const score=(input,p)=>{const n=normalize(input);const names=[p.name,p.catalogue_name,...(p.aliases||[])].filter(Boolean).map(normalize);if(!names.length)return 0;const nt=new Set(n.split(' ').filter(Boolean));return Math.max(...names.map(x=>{if(n===x)return 1;const ed=1-editDistance(n,x)/Math.max(n.length,x.length);const xt=new Set(x.split(' ').filter(Boolean));const inter=[...nt].filter(t=>xt.has(t)).length;const union=new Set([...nt,...xt]).size;const jac=union?inter/union:0;const contain=(n.length>7&&(n.includes(x)||x.includes(n)))?0.96:0;return Math.max(ed,jac>=0.75?0.92+jac*0.06:jac>=0.6?0.88+jac*0.05:0,contain)}))};
 const mapProduct=p=>({id:p.id,name:p.name,catalogueName:p.catalogue_name,type:p.type||'Technical',uom:p.uom||'KG',aliases:p.aliases||[],moleculeName:p.molecule_name||'',hsn:p.hsn||'',registrationStatus:p.registration_status||'',isCatalogue:p.is_catalogue!==false});
 const getProducts=async()=>{const {data,error}=await db.from('products').select('*').eq('is_catalogue',true).range(0,9999);if(error)throw error;return data||[]};
 const ensureSeed=async()=>{
@@ -27,7 +27,7 @@ const resolveProduct=async(source,name,products,mappings)=>{
   if(manual)return {id:manual.product_id,confidence:1,status:'MANUAL'};
   const ranked=products.map(p=>({p,s:score(name,p)})).sort((a,b)=>b.s-a.s);
   const best=ranked[0], second=ranked[1];
-  if(!best||best.s<0.9||(second&&best.s<0.97&&best.s-second.s<0.015))return {id:null,confidence:best?.s||0,status:'UNMAPPED',candidates:ranked.slice(0,5)};
+  if(!best||best.s<0.86||(second&&best.s<0.93&&best.s-second.s<0.02))return {id:null,confidence:best?.s||0,status:'UNMAPPED',candidates:ranked.slice(0,5)};
   return {id:best.p.id,confidence:best.s,status:'AUTO'};
 };
 
