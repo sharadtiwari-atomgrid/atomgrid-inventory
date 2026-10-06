@@ -14,8 +14,10 @@ const api={
   },
   async post(url:string,body:unknown){
     const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    const data=await r.json().catch(()=>({}));
-    if(!r.ok) throw new Error(data.error||'Request failed');
+    const raw=await r.text();
+    let data:any={};
+    try{data=raw?JSON.parse(raw):{}}catch{}
+    if(!r.ok) throw new Error(data.error||('Request failed ('+r.status+'): '+raw.slice(0,180)));
     return {data};
   }
 };
