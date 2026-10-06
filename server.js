@@ -35,7 +35,34 @@ app.get('/api/inventory',async(req,res)=>{try{await ensureSeed();const [p,w]=awa
 app.get('/api/mappings',async(req,res)=>{try{const {data,error}=await db.from('product_mappings').select('*').range(0,9999);if(error)throw error;res.json({mappings:data||[]})}catch(e){res.status(500).json({error:e.message})}});
 app.post('/api/mappings/resolve',async(req,res)=>{try{const source=String(req.body.source||'').trim(),sourceName=String(req.body.sourceName||'').trim();if(!source||!sourceName)return res.status(400).json({error:'Source and source product name are required.'});await ensureSeed();const products=await getProducts();const {data:mappings,error}=await db.from('product_mappings').select('*').range(0,9999);if(error)throw error;const r=await resolveProduct(source,sourceName,products,mappings);const candidates=products.map(p=>({product:mapProduct(p),score:score(sourceName,p)})).sort((a,b)=>b.score-a.score).slice(0,5);res.json({ok:Boolean(r.id),status:r.status,product:r.id?mapProduct(products.find(p=>p.id===r.id)):null,score:r.confidence,candidates})}catch(e){res.status(500).json({error:e.message})}});
 app.post('/api/mappings',async(req,res)=>{try{const source=String(req.body.source||'').trim(),sourceName=String(req.body.sourceName||'').trim(),productId=String(req.body.productId||'').trim();if(!source||!sourceName||!productId)return res.status(400).json({error:'Source, source name and product are required.'});const products=await getProducts();if(!products.some(p=>p.id===productId))return res.status(404).json({error:'Product not found.'});const normalizedSourceName=normalize(sourceName);const {data,error}=await db.from('product_mappings').upsert({source,source_name:sourceName,normalized_source_name:normalizedSourceName,product_id:productId,confidence:1,status:'MANUAL'},{onConflict:'source,normalized_source_name'}).select().single();if(error)throw error;res.json({ok:true,id:data.id})}catch(e){res.status(500).json({error:e.message})}});
-app.post('/api/catalogue/import',async(req,res)=>{try{const rows=Array.isArray(req.body.rows)?req.body.rows:[];if(!rows.length)return res.status(400).json({error:'Catalogue rows are required.'});await ensureSeed();const records=rows.map(r=>({catalogue_name:String(r.catalogueName||'').trim(),name:String(r.catalogueName||'').trim(),is_catalogue:true,type:String(r.technicalFormulation||'Technical'),uom:String(r.uom||'KG').toUpperCase(),aliases:Array.from(new Set([String(r.catalogueName||'').trim(),...(Array.isArray(r.aliases)?r.aliases.map(String):[])])),molecule_name:String(r.moleculeName||''),hsn:String(r.hsn||''),registration_status:String(r.registrationStatus||'')})).filter(r=>r.catalogue_name);if(records.length){const {error}=await db.from('products').upsert(records,{onConflict:'catalogue_name'});if(error)throw error)}res.json({ok:true,updated:records.length,added:0,total:rows.length})}catch(e){res.status(500).json({error:e.message})}});
+app.post('/api/catalogue/import',async(req,res)=>{
+  try{
+    const rows=Array.isArray(req.body.rows)?req.body.rows:[];
+    if(!rows.length)return res.status(400).json({error:'Catalogue rows are required.'});
+    await ensureSeed();
+    const records=rows.map(r=>{
+      const catalogueName=String(r.catalogueName||'').trim();
+      if(!catalogueName)return null;
+      const aliases=Array.isArray(r.aliases)?r.aliases.map(String):[];
+      return {
+        catalogue_name:catalogueName,
+        name:catalogueName,
+        is_catalogue:true,
+        type:String(r.technicalFormulation||'Technical'),
+        uom:String(r.uom||'KG').toUpperCase(),
+        aliases:Array.from(new Set([catalogueName,...aliases])),
+        molecule_name:String(r.moleculeName||''),
+        hsn:String(r.hsn||''),
+        registration_status:String(r.registrationStatus||'')
+      };
+    }).filter(Boolean);
+    if(records.length){
+      const {error}=await db.from('products').upsert(records,{onConflict:'catalogue_name'});
+      if(error)throw error;
+    }
+    res.json({ok:true,updated:records.length,added:0,total:rows.length});
+  }catch(e){res.status(500).json({error:e.message})}
+});
 app.post('/api/source-import',async(req,res)=>{try{const source=String(req.body.source||'').trim(),reportDate=String(req.body.reportDate||'').trim(),rows=Array.isArray(req.body.rows)?req.body.rows:[];if(!source||!reportDate||!rows.length)return res.status(400).json({error:'Source, report date and rows are required.'});const del=await db.from('source_records').delete().eq('source',source).eq('report_date',reportDate);if(del.error)throw del.error;const records=rows.map(r=>({source,report_date:reportDate,movement_date:r.movementDate?String(r.movementDate):null,product_name:String(r.productName||'').trim(),quantity:Number(r.quantity||0),direction:r.direction?String(r.direction):null,warehouse_inward:Number(r.warehouseInward||0),warehouse_outward:Number(r.warehouseOutward||0),warehouse_stock:r.warehouseStock===''||r.warehouseStock==null?null:Number(r.warehouseStock)})).filter(r=>r.product_name&&(r.quantity>0||source==='Warehouse Report'));let inserted=0;for(let i=0;i<records.length;i+=500){const {data,error}=await db.from('source_records').insert(records.slice(i,i+500)).select('id');if(error)throw error;inserted+=(data||[]).length}res.json({ok:true,source,reportDate,inserted})}catch(e){res.status(500).json({error:e.message})}});
 app.get('/api/reconciliation',async(req,res)=>{try{const date=String(req.query.date||'').slice(0,10);if(!date)return res.status(400).json({error:'Date is required.'});await ensureSeed();const [products,mr,rr]=await Promise.all([getProducts(),db.from('product_mappings').select('*').range(0,9999),db.from('source_records').select('*').range(0,9999)]);if(mr.error)throw mr.error;if(rr.error)throw rr.error;const mappings=mr.data||[],recs=rr.data||[];const inward=new Map(),outward=new Map(),dailyInward=new Map(),dailyOutward=new Map(),wh=new Map(),names=new Map();
   for(const r of recs){if(r.source==='Domestic MIS'&&r.direction==='INWARD'&&r.movement_date&&r.movement_date<=date){const m=await resolveProduct('Domestic MIS',r.product_name,products,mappings);const key=m.id||'UNMAPPED:'+normalize(r.product_name);inward.set(key,(inward.get(key)||0)+Number(r.quantity||0));if(r.movement_date===date)dailyInward.set(key,(dailyInward.get(key)||0)+Number(r.quantity||0));names.set(key,r.product_name)}
