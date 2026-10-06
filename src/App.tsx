@@ -62,7 +62,7 @@ function App(){
    const headerAt=matrix.findIndex(r=>{const z=headers(r);return z.some(x=>x.includes('material description'))&&(z.some(x=>x.includes('physical closing stock'))||z.some(x=>x.includes('stock in hand'))||z.some(x=>x.includes('physical stock'))||z.some(x=>x.includes('closing stock')))});
    if(headerAt<0)throw new Error('Could not find the Warehouse Excel Stock in Hand header. Expected Material Description and Physical Closing Stock/Closing Stock columns.');
    const whH=headers(matrix[headerAt]),whData=matrix.slice(headerAt+1);
-   const matName=find(whH,['material description','material']),ii=find(whH,['qty received','material inbound','inbound kg','inbound']),oi=find(whH,['qty dispatched','outbound kg','outbound']),psi=find(whH,['physical closing stock']),shi=find(whH,['stock in hand']),phsi=find(whH,['physical stock']),csi=find(whH,['closing stock']);
+   const matName=find(whH,['material description'])>=0?find(whH,['material description']):find(whH,['product name','material name','item name']);ii=find(whH,['qty received','material inbound','inbound kg','inbound']),oi=find(whH,['qty dispatched','outbound kg','outbound']),psi=find(whH,['physical closing stock']),shi=find(whH,['stock in hand']),phsi=find(whH,['physical stock']),csi=find(whH,['closing stock']);
    const si=psi>=0?psi:shi>=0?shi:phsi>=0?phsi:csi;
    if(matName<0||si<0)throw new Error('Expected Material Description and a warehouse stock column such as Physical Closing Stock, Stock in Hand, Physical Stock or Closing Stock in the Warehouse Excel.');
    const rows=whData.map(r=>({productName:String(r[matName]||'').trim(),warehouseInward:ii>=0?num(r[ii]):0,warehouseOutward:oi>=0?num(r[oi]):0,warehouseStock:num(r[si])})).filter(r=>r.productName);
