@@ -11,8 +11,31 @@ if(!supabaseUrl||!serviceKey) console.warn('Missing SUPABASE_URL or SUPABASE_SER
 const db=createClient(supabaseUrl||'http://localhost',serviceKey||'missing',{auth:{autoRefreshToken:false,persistSession:false}});
 
 const normalize=v=>String(v??'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim().replace(/\s+/g,' ');
+const coreNormalize=v=>normalize(v)
+  .replace(/\b(?:technical|tech|tc|minimum|min)\b/g,' ')
+  .replace(/\b(?:pack|packing|bag|bags|drum|drums|carton|cartons|box|boxes|nos|no)\b/g,' ')
+  .replace(/\b\d+(?:\.\d+)?\s*(?:kg|kgs|g|gm|gms|ltr|litre|litres|ml|mt|ton|tons)\b/g,' ')
+  .replace(/\b\d+\s*x\s*\d+(?:\.\d+)?\s*(?:kg|kgs|g|gm|gms|ltr|litre|litres|ml|mt|ton|tons)?\b/g,' ')
+  .replace(/\b(?:min|max)\b/g,' ')
+  .replace(/\s+/g,' ').trim();
 const editDistance=(a,b)=>{const prev=Array.from({length:b.length+1},(_,i)=>i);for(let i=1;i<=a.length;i++){const curr=[i];for(let j=1;j<=b.length;j++)curr[j]=Math.min(curr[j-1]+1,prev[j]+1,prev[j-1]+(a[i-1]===b[j-1]?0:1));for(let j=0;j<=b.length;j++)prev[j]=curr[j]}return prev[b.length]};
-const score=(input,p)=>{const n=normalize(input);const names=[p.name,p.catalogue_name,...(p.aliases||[])].filter(Boolean).map(normalize);if(!names.length)return 0;const nt=new Set(n.split(' ').filter(Boolean));return Math.max(...names.map(x=>{if(n===x)return 1;const ed=1-editDistance(n,x)/Math.max(n.length,x.length);const xt=new Set(x.split(' ').filter(Boolean));const inter=[...nt].filter(t=>xt.has(t)).length;const union=new Set([...nt,...xt]).size;const jac=union?inter/union:0;const contain=(n.length>7&&(n.includes(x)||x.includes(n)))?0.96:0;return Math.max(ed,jac>=0.75?0.92+jac*0.06:jac>=0.6?0.88+jac*0.05:0,contain)}))};
+const score=(input,p)=>{
+  const raw=normalize(input), core=coreNormalize(input);
+  const names=[p.name,p.catalogue_name,...(p.aliases||[])].filter(Boolean);
+  if(!names.length)return 0;
+  return Math.max(...names.map(name=>{
+    const x=normalize(name), xc=coreNormalize(name);
+    if(raw===x||core===xc)return 1;
+    const ed=1-editDistance(raw,x)/Math.max(raw.length,x.length);
+    const ced=core&&xc?1-editDistance(core,xc)/Math.max(core.length,xc.length):0;
+    const nt=new Set(core.split(' ').filter(Boolean)),xt=new Set(xc.split(' ').filter(Boolean));
+    const inter=[...nt].filter(t=>xt.has(t)).length;
+    const union=new Set([...nt,...xt]).size;
+    const jac=union?inter/union:0;
+    const contain=(core.length>5&&(core.includes(xc)||xc.includes(core)))?0.97:0;
+    return Math.max(ed,ced,jac>=0.75?0.93+jac*0.05:jac>=0.6?0.90+jac*0.04:0,contain);
+  }));
+};
 const mapProduct=p=>({id:p.id,name:p.name,catalogueName:p.catalogue_name,type:p.type||'Technical',uom:p.uom||'KG',aliases:p.aliases||[],moleculeName:p.molecule_name||'',hsn:p.hsn||'',registrationStatus:p.registration_status||'',isCatalogue:p.is_catalogue!==false});
 const getProducts=async()=>{const {data,error}=await db.from('products').select('*').eq('is_catalogue',true).range(0,9999);if(error)throw error;return data||[]};
 const ensureSeed=async()=>{
