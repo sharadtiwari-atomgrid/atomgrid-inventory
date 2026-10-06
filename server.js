@@ -46,5 +46,5 @@ app.post('/api/products',async(req,res)=>{try{const name=String(req.body.name||'
 
 app.get('/api/health',(req,res)=>res.json({ok:true,service:'atomgrid-inventory'}));
 app.use(express.static('dist'));
-app.get('*',(req,res)=>res.sendFile(process.cwd()+'/dist/index.html'));
+app.use((req,res)=>res.sendFile(process.cwd()+'/dist/index.html'));
 app.listen(PORT,()=>console.log('Atomgrid Inventory listening on '+PORT));
