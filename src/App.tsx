@@ -28,7 +28,7 @@ function parseCSV(text:string){const out:string[][]=[];let row:string[]=[],cell=
 const headers=(r:any[])=>r.map(x=>String(x??'').trim().toLowerCase().replace(/[^a-z0-9]+/g,' '));
 const find=(h:string[],names:string[])=>h.findIndex(x=>names.some(n=>x===n||x.includes(n)));
 const num=(v:any)=>Number(String(v??'').replace(/,/g,'').replace(/[^\d.-]/g,''))||0;
-const dateNorm=(v:any)=>{if(v instanceof Date&&!Number.isNaN(v.getTime()))return v.toISOString().slice(0,10);const s=String(v??'').trim();if(!s)return '';if(/^\d{4}-\d{1,2}-\d{1,2}/.test(s)){const m=s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/)!;return `${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`;}const m=s.match(/^(\d{1,2})[\\/-](\d{1,2})[\\/-](\d{4})/);if(m)return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;if(/^\d+(\.\d+)?$/.test(s)){const n=Number(s);if(n>30000&&n<60000){const d=new Date(Date.UTC(1899,11,30)+n*86400000);return d.toISOString().slice(0,10);}}const d=new Date(s);return Number.isNaN(d.getTime())?'':d.toISOString().slice(0,10)};
+const dateNorm=(v:any)=>{if(v instanceof Date&&!Number.isNaN(v.getTime())){const y=v.getFullYear(),m=v.getMonth()+1,d=v.getDate();return `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;}const s=String(v??'').trim();if(!s)return '';if(/^\d{4}-\d{1,2}-\d{1,2}/.test(s)){const m=s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/)!;return `${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`;}const m=s.match(/^(\d{1,2})[\\/-](\d{1,2})[\\/-](\d{4})/);if(m)return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;if(/^\d+(\.\d+)?$/.test(s)){const n=Number(s);if(n>30000&&n<60000){const d=new Date(Date.UTC(1899,11,30)+n*86400000);return d.toISOString().slice(0,10);}}const d=new Date(s);return Number.isNaN(d.getTime())?'':`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`};
 
 function App(){
  const [products,setProducts]=useState<Product[]>([]),[view,setView]=useState('report'),[date,setDate]=useState(today),[rows,setRows]=useState<Row[]>([]),[summary,setSummary]=useState<Summary|null>(null),[sourceHealth,setSourceHealth]=useState<SourceHealth|null>(null),[loading,setLoading]=useState(false),[notice,setNotice]=useState(''),[mappingSource,setMappingSource]=useState('Domestic MIS'),[mappingName,setMappingName]=useState(''),[candidates,setCandidates]=useState<any[]>([]),[mappingProduct,setMappingProduct]=useState('');
@@ -86,7 +86,7 @@ function App(){
    const di=find(dh,['ib ob date','ob date','inward date','arrival date','actual inward date','actual arrival date','movement date','date']),
          pi=find(dh,['ag catalogue name','product name','product','material name','item name','material']),
          qi=find(dh,['qty kg','qty','quantity kgs','quantity kg','quantity in kgs','quantity (in kgs)','net quantity kg','net weight kg','net weight','total weight']),
-         ty=find(dh,['type','movement type','ib ob','movement']);
+         ty=find(dh,['movement type','type','movement']);
    const hasType=ty>=0;
    const rows=dd.map(r=>{
     const rawType=hasType?String(r[ty]??'').trim():'';
