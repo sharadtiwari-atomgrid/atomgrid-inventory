@@ -90,7 +90,10 @@ function App(){
    const hasType=ty>=0;
    const rows=dd.map(r=>{
     const rawType=hasType?String(r[ty]??'').trim():'';
-    const direction=!hasType||!rawType?'INWARD':(/^(inward|ib|inbound|receipt|grn|in|received|inwarded)(\b|\s)/i.test(rawType)||/\binward\b/i.test(rawType))?'INWARD':(/^(outward|ob|outbound|dispatch|out|dispatched)(\b|\s)/i.test(rawType)||/\boutward\b/i.test(rawType))?'OUTWARD':'';
+    // Domestic MIS is an inward source. Only explicitly outward/OB rows are excluded;
+    // blank or other workflow labels remain inward so valid receipts are not lost.
+    const isExplicitOutward=/^(outward|ob|outbound|dispatch|out|dispatched)(\\b|\\s)/i.test(rawType)||/\\boutward\\b/i.test(rawType)||/^ob[\\s\\/-]/i.test(rawType);
+    const direction=isExplicitOutward?'OUTWARD':'INWARD';
     return {movementDate:dateNorm(r[di]),productName:String(r[pi]||'').trim(),quantity:num(r[qi]),direction};
    }).filter(r=>r.movementDate&&r.productName&&r.quantity>0&&r.direction==='INWARD');
    if(!rows.length)throw new Error('Domestic MIS header was found, but no valid inward rows were detected. Check the date, product and quantity columns and the movement-type values.');
