@@ -112,9 +112,14 @@ app.post('/api/import/warehouse',async(req,res)=>{
   if(wm.length){const {error}=await db.from('inventory_warehouse_movements').upsert(wm,{onConflict:'source_key'});if(error)throw error}
   const snapshots=[...new Set(eod.map(x=>String(x.snapshotDate).slice(0,10)).filter(Boolean))];
   for(const d of snapshots){const del=await db.from('inventory_warehouse_eod').delete().eq('snapshot_date',d);if(del.error)throw del.error}
-  const we=eod.filter(r=>r.snapshotDate&&r.productName).map(r=>{const m=resolve(r.productName,products);return{
-    snapshot_date:String(r.snapshotDate).slice(0,10),product_id:m.id,source_product_name:String(r.productName).trim(),physical_closing_stock:r.physicalClosingStock==null?null:Number(r.physicalClosingStock)
-  }}).filter(r=>r.product_id);
+  const groupedEod=new Map();
+  for(const r of eod.filter(r=>r.snapshotDate&&r.productName)){
+    const m=resolve(r.productName,products); if(!m.id)continue;
+    const k=String(r.snapshotDate).slice(0,10)+'|'+m.id;
+    const prev=groupedEod.get(k); const q=r.physicalClosingStock==null?null:Number(r.physicalClosingStock);
+    groupedEod.set(k,{snapshot_date:String(r.snapshotDate).slice(0,10),product_id:m.id,source_product_name:String(r.productName).trim(),physical_closing_stock:(prev?.physical_closing_stock||0)+(q==null?0:q)});
+  }
+  const we=[...groupedEod.values()];
   if(we.length){const {error}=await db.from('inventory_warehouse_eod').insert(we);if(error)throw error}
   res.json({ok:true,movements:wm.length,eod:we.length,unmappedMovements:wm.filter(x=>!x.product_id).length,snapshotDates:snapshots});
  }catch(e){res.status(500).json({error:e.message})}
@@ -132,8 +137,8 @@ app.get('/api/reconciliation',async(req,res)=>{
   ]);
   for(const x of [base,dm,wm,eod])if(x.error)throw x.error;
   const baseMap=new Map((base.data||[]).map(x=>[x.product_id,x]));
-  const di=new Map(),do_=new Map(),wi=new Map(),wo=new Map(),physical=new Map();
-  for(const r of dm.data||[]){if(!r.product_id)continue;const b=baseMap.get(r.product_id);if(!b||r.actual_date<b.base_date)continue;const q=Number(r.quantity||0);const map=r.movement_type==='INWARD'?di:do_;map.set(r.product_id,(map.get(r.product_id)||0)+q)}
+  const di=new Map(),do_=new Map(),todayDi=new Map(),todayDo=new Map(),wi=new Map(),wo=new Map(),physical=new Map();
+  for(const r of dm.data||[]){if(!r.product_id)continue;const b=baseMap.get(r.product_id);if(!b||r.actual_date<b.base_date)continue;const q=Number(r.quantity||0);const map=r.movement_type==='INWARD'?di:do_;map.set(r.product_id,(map.get(r.product_id)||0)+q);if(r.actual_date===date){const dm=r.movement_type==='INWARD'?todayDi:todayDo;dm.set(r.product_id,(dm.get(r.product_id)||0)+q)}}
   for(const r of wm.data||[]){if(!r.product_id)continue;const map=r.movement_type==='INWARD'?wi:wo;map.set(r.product_id,(map.get(r.product_id)||0)+Number(r.quantity||0))}
   for(const r of eod.data||[])if(r.product_id)physical.set(r.product_id,r.physical_closing_stock==null?null:Number(r.physical_closing_stock));
   const rows=products.map(p=>{
@@ -148,7 +153,7 @@ app.get('/api/reconciliation',async(req,res)=>{
     else if(wh==null)status='PHYSICAL STOCK MISSING';
     else if(Math.abs(variance||0)>.001)status='STOCK VARIANCE';
     else if(Math.abs(inDiff)>.001||Math.abs(outDiff)>.001)status='MOVEMENT MISMATCH';
-    return {productId:p.id,product:p.catalogue_name,baseDate:b?.base_date||null,baseStock:baseQty,domesticInward:inward,domesticOutward:outward,expectedClosing:expected,warehouseInward:wi.get(p.id)||0,warehouseOutward:wo.get(p.id)||0,physicalClosing:wh,stockVariance:variance,inwardDifference:inDiff,outwardDifference:outDiff,status};
+    return {productId:p.id,product:p.catalogue_name,baseDate:b?.base_date||null,baseStock:baseQty,domesticInward:inward,domesticOutward:outward,todayDomesticInward:todayDi.get(p.id)||0,todayDomesticOutward:todayDo.get(p.id)||0,expectedClosing:expected,warehouseInward:wi.get(p.id)||0,warehouseOutward:wo.get(p.id)||0,physicalClosing:wh,stockVariance:variance,inwardDifference:inDiff,outwardDifference:outDiff,status};
   });
   const summary={products:rows.length,matched:rows.filter(r=>r.status==='MATCH').length,stockVariance:rows.filter(r=>r.status==='STOCK VARIANCE').length,movementMismatch:rows.filter(r=>r.status==='MOVEMENT MISMATCH').length,baseMissing:rows.filter(r=>r.status==='BASE STOCK MISSING').length,physicalMissing:rows.filter(r=>r.status==='PHYSICAL STOCK MISSING').length,domesticInward:(dm.data||[]).filter(r=>r.movement_type==='INWARD').reduce((s,r)=>s+Number(r.quantity||0),0),domesticOutward:(dm.data||[]).filter(r=>r.movement_type==='OUTWARD').reduce((s,r)=>s+Number(r.quantity||0),0)};
   res.json({date,summary,rows:rows.sort((a,b)=>Math.abs(b.stockVariance||0)-Math.abs(a.stockVariance||0))});
