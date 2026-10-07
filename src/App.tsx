@@ -25,7 +25,7 @@ const api={
 const fmt=(v:number)=>new Intl.NumberFormat('en-IN',{maximumFractionDigits:2}).format(v);
 const today=new Date().toISOString().slice(0,10);
 function parseCSV(text:string){const out:string[][]=[];let row:string[]=[],cell='',q=false;for(let i=0;i<text.length;i++){const c=text[i],nx=text[i+1];if(c==='"'){if(q&&nx==='"'){cell+='"';i++;}else q=!q;}else if(c===','&&!q){row.push(cell);cell='';}else if((c==='\n'||c==='\r')&&!q){if(c==='\r'&&nx==='\n')i++;row.push(cell);cell='';if(row.some(x=>x.trim()))out.push(row);row=[];}else cell+=c;}row.push(cell);if(row.some(x=>x.trim()))out.push(row);return out}
-const headers=(r:string[])=>r.map(x=>x.trim().toLowerCase().replace(/[^a-z0-9]+/g,' '));
+const headers=(r:any[])=>r.map(x=>String(x??'').trim().toLowerCase().replace(/[^a-z0-9]+/g,' '));
 const find=(h:string[],names:string[])=>h.findIndex(x=>names.some(n=>x===n||x.includes(n)));
 const num=(v:any)=>Number(String(v??'').replace(/,/g,'').replace(/[^\d.-]/g,''))||0;
 const dateNorm=(v:any)=>{if(v instanceof Date&&!Number.isNaN(v.getTime()))return v.toISOString().slice(0,10);const s=String(v??'').trim();if(!s)return '';if(/^\d{4}-\d{1,2}-\d{1,2}/.test(s)){const m=s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/)!;return `${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`;}const m=s.match(/^(\d{1,2})[\\/-](\d{1,2})[\\/-](\d{4})/);if(m)return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;if(/^\d+(\.\d+)?$/.test(s)){const n=Number(s);if(n>30000&&n<60000){const d=new Date(Date.UTC(1899,11,30)+n*86400000);return d.toISOString().slice(0,10);}}const d=new Date(s);return Number.isNaN(d.getTime())?'':d.toISOString().slice(0,10)};
