@@ -50,8 +50,21 @@ function App(){
     if(!found)throw new Error('No Stock in Hand sheet found. Expected Material Description and Physical Closing Stock/Closing Stock columns.');
     matrix=found;
    }else{
-    const ws=wb.Sheets[wb.SheetNames[0]];
-    matrix=XLSX.utils.sheet_to_json(ws,{header:1,raw:true,defval:''}) as string[][];
+    // Domestic MIS workbooks can have the data on a sheet other than the first one.
+    // Scan every sheet and select the sheet containing the strongest date/product/qty header.
+    let best:string[][]|null=null, bestScore=0;
+    for(const sheetName of wb.SheetNames){
+     const candidate=XLSX.utils.sheet_to_json(wb.Sheets[sheetName],{header:1,raw:true,defval:''}) as string[][];
+     for(const r of candidate.slice(0,80)){
+      const z=headers(r);
+      const hasDate=z.some(x=>/(^| )(ib ob|ob|inward|arrival|actual inward|actual arrival|movement|dispatch) date($| )/.test(x)||x==='date');
+      const hasProduct=z.some(x=>/(ag )?(catalogue|product|material|item)( name)?/.test(x));
+      const hasQty=z.some(x=>/(qty|quantity|net weight|net quantity|total weight)( |$)/.test(x)||x.includes('quantity in kgs'));
+      const score=(hasDate?1:0)+(hasProduct?1:0)+(hasQty?1:0);
+      if(score>bestScore){bestScore=score;best=candidate;}
+     }
+    }
+    matrix=best||[];
    }
   }else{
    matrix=parseCSV(await file.text());
@@ -59,7 +72,33 @@ function App(){
   if(matrix.length<2)throw new Error('File is empty.');
   const h=headers(matrix[0]),data=matrix.slice(1);
   if(source==='Product Catalogue'){const ci=find(h,['product catalogue name']);if(ci<0)throw new Error('Product Catalogue Name column not found.');const ai=find(h,['product name']),mi=find(h,['molecule name']),ti=find(h,['technical formulation','technical / formulation']),hi=find(h,['hsn']),ri=find(h,['registeration status','registration status']);const map=new Map<string,any>();for(const r of data){const cat=String(r[ci]||'').trim();if(!cat)continue;let x=map.get(cat);if(!x){x={catalogueName:cat,aliases:[],moleculeName:mi>=0?r[mi]||'':'',technicalFormulation:ti>=0?r[ti]||'':'',hsn:hi>=0?r[hi]||'':'',registrationStatus:ri>=0?r[ri]||'':''};map.set(cat,x)}if(ai>=0&&r[ai])x.aliases.push(String(r[ai]).trim())}const r=await api.post('/api/catalogue/import',{rows:Array.from(map.values())});setNotice('Catalogue imported: '+(r.data.added||0)+' added, '+(r.data.updated||0)+' updated.');await load();return}
-  if(source==='Domestic MIS'){const headerAt=matrix.findIndex(r=>{const z=headers(r);const hasDate=z.some(x=>['ib ob date','ob date','inward date','arrival date','actual inward date','actual arrival date','movement date'].some(n=>x===n||x.includes(n)));const hasProduct=z.some(x=>['ag catalogue name','product name','product','material name'].some(n=>x===n||x.includes(n)));const hasQty=z.some(x=>['qty kg','quantity kgs','quantity kg','quantity in kgs','net quantity kg','net weight kg','net weight','qty'].some(n=>x===n||x.includes(n)));return hasDate&&hasProduct&&hasQty});if(headerAt<0)throw new Error('Could not find the Domestic MIS header row. Supported headers include OB Date, Product Name and Quantity KGS.');const dh=headers(matrix[headerAt]),dd=matrix.slice(headerAt+1);const di=find(dh,['ib ob date','ob date','inward date','arrival date','actual inward date','actual arrival date','movement date']),pi=find(dh,['ag catalogue name','product name','product','material name']),qi=find(dh,['qty kg','quantity kgs','quantity kg','quantity in kgs','net quantity kg','net weight kg','net weight','qty']),ty=find(dh,['type','movement type','ib ob','movement']);const hasType=ty>=0;const rows=dd.map(r=>({movementDate:dateNorm(r[di]),productName:String(r[pi]||'').trim(),quantity:num(r[qi]),direction:hasType?( /^(inward|ib|inbound|receipt|grn|in)$/i.test(String(r[ty]||'').trim())?'INWARD':/^(outward|ob|outbound|dispatch|out)$/i.test(String(r[ty]||'').trim())?'OUTWARD':''):'INWARD'})).filter(r=>r.movementDate&&r.productName&&r.quantity>0&&r.direction==='INWARD');if(!rows.length)throw new Error('No valid inward rows found in the Domestic MIS. Header was detected, but no inward rows were recognised. If this file has no movement-type column, all valid rows are treated as inward.');const r=await api.post('/api/source-import',{source,reportDate:date,rows});const dates=rows.map(x=>x.movementDate).sort();setNotice('Domestic MIS imported: '+r.data.inserted+' actual inward rows · '+dates[0]+' to '+dates[dates.length-1]+'.');await reconcile();setView('reconciliation');return}
+  if(source==='Domestic MIS'){
+   const scoreHeader=(r:any[])=>{
+    const z=headers(r);
+    const hasDate=z.some(x=>['ib ob date','ob date','inward date','arrival date','actual inward date','actual arrival date','movement date','date'].some(n=>x===n||x.includes(n)));
+    const hasProduct=z.some(x=>['ag catalogue name','product name','product','material name','item name','material'].some(n=>x===n||x.includes(n)));
+    const hasQty=z.some(x=>['qty kg','qty','quantity kgs','quantity kg','quantity in kgs','quantity (in kgs)','net quantity kg','net weight kg','net weight','total weight'].some(n=>x===n||x.includes(n)));
+    return (hasDate?1:0)+(hasProduct?1:0)+(hasQty?1:0);
+   };
+   const headerAt=matrix.findIndex(r=>scoreHeader(r)>=3);
+   if(headerAt<0)throw new Error('Could not find the Domestic MIS data header. The importer now scans all Excel sheets and supports OB Date / IB-OB Date, Product or AG Catalogue Name, and Qty / Quantity / Quantity in KGS.');
+   const dh=headers(matrix[headerAt]),dd=matrix.slice(headerAt+1);
+   const di=find(dh,['ib ob date','ob date','inward date','arrival date','actual inward date','actual arrival date','movement date','date']),
+         pi=find(dh,['ag catalogue name','product name','product','material name','item name','material']),
+         qi=find(dh,['qty kg','qty','quantity kgs','quantity kg','quantity in kgs','quantity (in kgs)','net quantity kg','net weight kg','net weight','total weight']),
+         ty=find(dh,['type','movement type','ib ob','movement']);
+   const hasType=ty>=0;
+   const rows=dd.map(r=>{
+    const rawType=hasType?String(r[ty]??'').trim():'';
+    const direction=!hasType||!rawType?'INWARD':(/^(inward|ib|inbound|receipt|grn|in|received|inwarded)(\b|\s)/i.test(rawType)||/\binward\b/i.test(rawType))?'INWARD':(/^(outward|ob|outbound|dispatch|out|dispatched)(\b|\s)/i.test(rawType)||/\boutward\b/i.test(rawType))?'OUTWARD':'';
+    return {movementDate:dateNorm(r[di]),productName:String(r[pi]||'').trim(),quantity:num(r[qi]),direction};
+   }).filter(r=>r.movementDate&&r.productName&&r.quantity>0&&r.direction==='INWARD');
+   if(!rows.length)throw new Error('Domestic MIS header was found, but no valid inward rows were detected. Check the date, product and quantity columns and the movement-type values.');
+   const r=await api.post('/api/source-import',{source,reportDate:date,rows});
+   const dates=rows.map(x=>x.movementDate).sort();
+   setNotice('Domestic MIS imported: '+r.data.inserted+' actual inward rows · '+dates[0]+' to '+dates[dates.length-1]+'.');
+   await reconcile();setView('reconciliation');return
+  }
   if(source==='Outward Dispatch Sheet'){const headerAt=matrix.findIndex(r=>{const z=headers(r);return z.some(x=>x.includes('dispatch date'))&&z.some(x=>x.includes('product'))&&z.some(x=>x.includes('total weight'))});if(headerAt<0)throw new Error('Could not find the Outward Dispatch header row. Expected Dispatch Date, Product and Total Weight columns.');const oh=headers(matrix[headerAt]),od=matrix.slice(headerAt+1);const di=find(oh,['dispatch date']),pi=find(oh,['product']),qi=find(oh,['total weight']);if(di<0||pi<0||qi<0)throw new Error('Expected Dispatch Date, Product and Total Weight columns.');const rows=od.map(r=>({movementDate:dateNorm(r[di]),productName:String(r[pi]||'').trim(),quantity:num(r[qi]),direction:'OUTWARD'})).filter(r=>r.movementDate&&r.productName&&r.quantity>0);if(!rows.length)throw new Error('No valid outward rows found after detecting the dispatch header.');const rr=await api.post('/api/source-import',{source,reportDate:date,rows});const dates=rows.map(x=>x.movementDate).sort();setNotice('Outward Dispatch Sheet imported: '+rr.data.inserted+' actual dispatch rows · '+dates[0]+' to '+dates[dates.length-1]+'.');await reconcile();setView('reconciliation');return}
   if(source==='Warehouse Report'){
    const headerAt=matrix.findIndex(r=>{const z=headers(r);return z.some(x=>x.includes('material description'))&&(z.some(x=>x.includes('physical closing stock'))||z.some(x=>x.includes('stock in hand'))||z.some(x=>x.includes('physical stock'))||z.some(x=>x.includes('closing stock')))});
