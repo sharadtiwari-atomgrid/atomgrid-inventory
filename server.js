@@ -125,6 +125,8 @@ app.post('/api/import/warehouse',async(req,res)=>{
  }catch(e){res.status(500).json({error:e.message})}
 });
 
+app.get('/api/import-status',async(req,res)=>{try{const [p,b,d,w,e]=await Promise.all([db.from('inventory_products').select('id,catalogue_name,aliases,molecule_name,hsn,registration_status').order('catalogue_name').range(0,9999),db.from('inventory_base_stock').select('product_id,base_date,base_quantity').range(0,9999),db.from('inventory_domestic_movements').select('id,product_id,source_product_name,movement_type,actual_date,quantity,job_no,status').order('actual_date',{ascending:false}).range(0,9999),db.from('inventory_warehouse_movements').select('id,product_id,source_product_name,movement_type,movement_date,quantity,reference_no').order('movement_date',{ascending:false}).range(0,9999),db.from('inventory_warehouse_eod').select('snapshot_date,product_id,source_product_name,physical_closing_stock').order('snapshot_date',{ascending:false}).range(0,9999)]);for(const x of [p,b,d,w,e])if(x.error)throw x.error;res.json({products:p.data||[],baseStock:b.data||[],domestic:d.data||[],warehouse:w.data||[],eod:e.data||[]})}catch(e){res.status(500).json({error:e.message})}});
+
 app.get('/api/reconciliation',async(req,res)=>{
  try{
   const date=String(req.query.date||'').slice(0,10); if(!date)throw new Error('Date is required.');
@@ -147,7 +149,7 @@ app.get('/api/reconciliation',async(req,res)=>{
     const expected=baseQty==null?null:baseQty+inward-outward;
     const wh=physical.has(p.id)?physical.get(p.id):null;
     const variance=expected==null||wh==null?null:wh-expected;
-    const inDiff=inward-(wi.get(p.id)||0),outDiff=outward-(wo.get(p.id)||0);
+    const inDiff=(todayDi.get(p.id)||0)-(wi.get(p.id)||0),outDiff=(todayDo.get(p.id)||0)-(wo.get(p.id)||0);
     let status='MATCH';
     if(baseQty==null)status='BASE STOCK MISSING';
     else if(wh==null)status='PHYSICAL STOCK MISSING';
